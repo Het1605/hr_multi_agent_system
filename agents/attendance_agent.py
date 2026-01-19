@@ -30,8 +30,8 @@ prompt = ChatPromptTemplate.from_messages(
 
             Your responsibilities:
             - Handle employee check-in and check-out
+            - Accept user-provided time if available
             - Prevent invalid attendance operations
-            - Respond clearly and politely
             - Never assume employee name is unique
             """
         ),
@@ -46,7 +46,6 @@ def attendance_agent(state: HRState) -> Dict:
     user_input = state["user_input"]
 
     today = current_date()
-    now = current_time()
 
     response_text = ""
 
@@ -78,7 +77,6 @@ def attendance_agent(state: HRState) -> Dict:
     else:
         response_text = "Please specify the employee (name, email, or ID)."
 
-    # If unresolved ambiguity, respond immediately
     if response_text:
         return {
             "messages": state.get("messages", []) + [
@@ -92,20 +90,22 @@ def attendance_agent(state: HRState) -> Dict:
     # START ATTENDANCE
     # -----------------------------
     if intent == "start_attendance":
+        start_time = entities.get("start_time") or current_time()
         existing = get_attendance_for_employee_on_date(emp_id, today)
 
         if existing and existing["start_time"]:
             response_text = "Work has already been started for today."
         else:
-            start_attendance(emp_id, today, now)
+            start_attendance(emp_id, today, start_time)
             response_text = (
-                f"Work started for {employee['name']} at {now}."
+                f"Work started for {employee['name']} at {start_time}."
             )
 
     # -----------------------------
     # END ATTENDANCE
     # -----------------------------
     elif intent == "end_attendance":
+        end_time = entities.get("end_time") or current_time()
         existing = get_attendance_for_employee_on_date(emp_id, today)
 
         if not existing or not existing["start_time"]:
@@ -113,9 +113,9 @@ def attendance_agent(state: HRState) -> Dict:
         elif existing["end_time"]:
             response_text = "Work has already been ended for today."
         else:
-            end_attendance(emp_id, today, now)
+            end_attendance(emp_id, today, end_time)
             response_text = (
-                f"Work ended for {employee['name']} at {now}."
+                f"Work ended for {employee['name']} at {end_time}."
             )
 
     else:
