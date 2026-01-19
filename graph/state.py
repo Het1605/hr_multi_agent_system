@@ -1,9 +1,9 @@
-from typing import TypedDict, List, Any, Optional
+from typing import Dict, TypedDict, List, Any, Optional
 
 
 class HRState(TypedDict):
     user_input: str
     intent: Optional[str]
     employee_id: Optional[int]
-    data: Any
+    data:Dict[str, Any]   # <-- entities live here
     messages: List[Any]

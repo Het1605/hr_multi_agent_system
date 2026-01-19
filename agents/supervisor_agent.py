@@ -75,6 +75,89 @@ prompt = ChatPromptTemplate.from_messages(
             - hr_policy
             - unknown
 
+            CRITICAL ENTITY EXTRACTION & FOLLOW-UP RULES:
+
+            (All examples below use dummy names for illustration only.)
+
+            Employee registration handling:
+            - Users may provide name, email, and role in ANY format, including:
+            • "alex, alex@example.com, QA"
+            • "alex alex@example.com QA"
+            • "my name is alex, email alex@example.com, role QA"
+            • "alex, QA" (partial)
+            • "alex" (partial)
+
+            Entity identification rules:
+            - Any word containing "@" MUST be treated as email.
+            - Role and name do NOT have fixed positions.
+            - Do NOT assume the first value is always the name.
+
+            Comma- or space-separated input handling:
+            - Identify email first using "@"
+            - From remaining values:
+            • If a value matches common role patterns (QA, AI, ML, HR, Dev, Engineer, Tester),
+                treat it as role
+            • Otherwise, treat it as name
+            - If multiple non-email values exist:
+            • Prefer human-name–like words as name
+            • Prefer job-related words as role
+
+            Short / ambiguous role handling:
+            - Short or abbreviated role terms (case-insensitive) may be ambiguous, such as:
+                - qa, q.a, quality
+                - ai, artificial intelligence
+                - ml, machine learning
+                - dev, developer
+                - tester, testing
+                - powerbi, power bi
+
+                Treat role detection as semantic, not exact-match.
+            - Expand them to reasonable full forms when possible:
+            • "QA" → "QA Engineer"
+            • "AI" → "AI Developer"
+            • "ML" → "ML Engineer"
+            - If expansion is uncertain, keep the original value
+
+            Confirmation requirement:
+            - Before creating an employee, always prepare a confirmation summary:
+            Name, Email, Role
+            - Ask the user to confirm with a clear yes/no response.
+            - Examples of confirmation:
+            • "Yes"
+            • "Confirm"
+            • "Looks good"
+            - If the user says NO or corrects details:
+            - Update the entities
+            - Show the confirmation again
+            - If the user denies registration:
+            - Do NOT proceed
+
+            Partial input rules:
+            - If only ONE value is provided:
+            • Treat it as name
+            - If TWO values are provided:
+            • If one contains "@", treat as name + email
+            • Otherwise, treat as name + role (tentative)
+
+            Conversation memory rules:
+            - If the intent is "create_employee" and some fields are missing:
+            • Reuse entities already provided in previous messages
+            • Merge new entities with previously extracted entities
+            • DO NOT discard earlier information
+
+            PARTIAL REGISTRATION HANDLING:
+
+            - If intent is "create_employee" and some fields are already extracted:
+            • Identify exactly which fields are missing (name, email, role)
+            • Do NOT treat missing fields as all fields missing
+            • Do NOT reset previously extracted information
+            - Clearly indicate which fields are missing so the next agent can ask ONLY for those fields
+
+            IMPORTANT:
+            - NEVER ignore user-provided information
+            - NEVER assume extracted data is final without confirmation
+            - Always extract the BEST POSSIBLE entities from the input
+
             Return ONLY structured output.
             {format_instructions}
             """
@@ -89,6 +172,31 @@ prompt = ChatPromptTemplate.from_messages(
 def supervisor_agent(state: HRState):
     chain = prompt | llm | parser
     result = chain.invoke({"input": state["user_input"]})
+
+    # -----------------------------
+    # Merge entities across turns
+    # -----------------------------
+    previous_entities = (
+        state.get("data", {}).get("entities", {})
+        if state.get("data")
+        else {}
+    )
+
+    new_entities = result.entities or {}
+
+    merged_entities = {
+        **previous_entities,
+        **{k: v for k, v in new_entities.items() if v}
+    }
+
+    # -----------------------------
+    # Identify missing fields (employee registration)
+    # -----------------------------
+    required_fields = ["name", "email", "role"]
+    missing_fields = [
+        field for field in required_fields
+        if field not in merged_entities
+    ]
 
     # If greeting → generate response AND stop graph
     if result.intent == "greeting":
@@ -133,7 +241,8 @@ def supervisor_agent(state: HRState):
     return {
         "intent": result.intent,
         "data": {
-            "entities": result.entities,
+            "entities": merged_entities,
+            "missing_fields": missing_fields,
             "confidence": result.confidence
         },
         "stop": False,

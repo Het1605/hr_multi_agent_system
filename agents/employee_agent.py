@@ -63,10 +63,27 @@ def employee_agent(state: HRState) -> Dict:
         email = entities.get("email")
         role = entities.get("role")
 
-        if not name or not email or not role:
-            response_text = (
-                "To register an employee, I need name, email, and role."
+        missing_fields = state["data"].get("missing_fields", [])
+
+        if missing_fields:
+            field_messages = {
+                "name": "the employee name",
+                "email": "the employee email address",
+                "role": "the employee role"
+            }
+
+            missing_text = ", ".join(
+                field_messages[field] for field in missing_fields
             )
+
+            return {
+                "messages": state.get("messages", []) + [
+                    {
+                        "role": "assistant",
+                        "content": f"I have some details already. Please provide {missing_text}."
+                    }
+                ]
+            }
         else:
             existing = get_employee_by_email(email)
             if existing:
