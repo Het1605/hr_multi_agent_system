@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -19,7 +19,6 @@ llm = ChatOpenAI(
     temperature=LLM_TEMPERATURE
 )
 
-
 # -----------------------------
 # PROMPT
 # -----------------------------
@@ -30,71 +29,86 @@ prompt = ChatPromptTemplate.from_messages(
             """
             You are an Employee Management Agent in an HR system.
 
-            Your responsibilities:
-            - Create new employees
-            - Find employee details
-            - Handle duplicate names safely
-            - Ask clarification if needed
-            - Respond clearly to the user
+                Your responsibilities:
+                - Create new employees
+                - Find employee details
+                - Handle duplicate names safely
+                - Ask clarification if needed
+                - Respond clearly to the user
 
-            Never assume uniqueness of name or role.
+                Never assume uniqueness of name or role.
             """
         ),
         ("human", "{input}")
     ]
 )
 
-
 # -----------------------------
 # EMPLOYEE AGENT
 # -----------------------------
 def employee_agent(state: HRState) -> Dict:
-    intent = state["intent"]
-    entities = state.get("data", {}).get("entities", {})
-    user_input = state["user_input"]
+    intent = state.get("intent")
+    data = state.get("data", {})
+    entities = data.get("entities", {})
+    
+    # Recompute missing fields deterministically (SOURCE OF TRUTH)
+    required_fields = ["name", "email", "role"]
 
-    response_text = ""
+    missing_fields = [
+        field for field in required_fields
+        if not entities.get(field)
+    ]
+
+    response_context = {
+        "intent": intent,
+        "entities": entities,
+        "missing_fields": missing_fields
+    }
 
     # -----------------------------
     # CREATE EMPLOYEE
     # -----------------------------
     if intent == "create_employee":
+        # If something is missing, let LLM ask properly
+        safe_missing_fields = [
+            f for f in missing_fields if f not in entities
+        ]
+
+        if safe_missing_fields:
+            response_context["missing_fields"] = safe_missing_fields
+
+            chain = prompt | llm
+            final_response = chain.invoke({"input": response_context})
+
+            return {
+                "data": data,
+                "messages": state.get("messages", []) + [
+                    {"role": "assistant", "content": final_response.content}
+                ]
+            }
+
+        # All details present → create employee
         name = entities.get("name")
         email = entities.get("email")
         role = entities.get("role")
 
-        missing_fields = state["data"].get("missing_fields", [])
-
-        if missing_fields:
-            field_messages = {
-                "name": "the employee name",
-                "email": "the employee email address",
-                "role": "the employee role"
-            }
-
-            missing_text = ", ".join(
-                field_messages[field] for field in missing_fields
-            )
-
-            return {
-                "messages": state.get("messages", []) + [
-                    {
-                        "role": "assistant",
-                        "content": f"I have some details already. Please provide {missing_text}."
-                    }
-                ]
-            }
+        existing = get_employee_by_email(email)
+        if existing:
+            response_context["result"] = "duplicate_email"
         else:
-            existing = get_employee_by_email(email)
-            if existing:
-                response_text = (
-                    f"An employee with email {email} already exists."
-                )
-            else:
-                emp_id = create_employee(name, email, role)
-                response_text = (
-                    f"Employee {name} registered successfully with ID {emp_id}."
-                )
+            emp_id = create_employee(name, email, role)
+            response_context["result"] = "created"
+            response_context["employee_id"] = emp_id
+
+        chain = prompt | llm
+        final_response = chain.invoke({"input": response_context})
+
+        return {
+            "data": data,
+            "messages": state.get("messages", []) + [
+                {"role": "assistant", "content": final_response.content}
+            ]
+        }
 
     # -----------------------------
     # FIND EMPLOYEE
@@ -117,39 +131,26 @@ def employee_agent(state: HRState) -> Dict:
         else:
             employees = get_all_employees()
 
-        if not employees:
-            response_text = "No employee found."
+        response_context["employees"] = employees
 
-        elif len(employees) == 1:
-            e = employees[0]
-            response_text = (
-                f"Employee found:\n"
-                f"Name: {e['name']}\n"
-                f"Email: {e['email']}\n"
-                f"Role: {e['role']}\n"
-                f"ID: {e['id']}"
-            )
+        chain = prompt | llm
+        final_response = chain.invoke({"input": response_context})
 
-        else:
-            response_text = (
-                "Multiple employees found. Please specify one:\n"
-            )
-            for e in employees:
-                response_text += (
-                    f"- ID {e['id']}: {e['name']} ({e['role']})\n"
-                )
-
-    else:
-        response_text = "Employee agent could not handle this request."
+        return {
+            "data": data,
+            "messages": state.get("messages", []) + [
+                {"role": "assistant", "content": final_response.content}
+            ]
+        }
 
     # -----------------------------
-    # LLM RESPONSE POLISHING
+    # FALLBACK
     # -----------------------------
     chain = prompt | llm
-    final_response = chain.invoke({"input": response_text})
+    final_response = chain.invoke({"input": response_context})
 
     return {
-        "data": state.get("data", {}),
+        "data": data,
         "messages": state.get("messages", []) + [
             {"role": "assistant", "content": final_response.content}
         ]

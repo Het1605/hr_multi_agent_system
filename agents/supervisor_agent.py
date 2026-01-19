@@ -13,6 +13,7 @@ from config.settings import LLM_MODEL, LLM_TEMPERATURE
 # -----------------------------
 class SupervisorOutput(BaseModel):
     intent: str
+    action: str                  # start | continue | query | confirm | cancel
     entities: Dict[str, Any]
     confidence: float
 
