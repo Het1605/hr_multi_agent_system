@@ -90,7 +90,16 @@ def attendance_agent(state: HRState) -> Dict:
     # START ATTENDANCE
     # -----------------------------
     if intent == "start_attendance":
-        start_time = entities.get("start_time") or current_time()
+        start_time = entities.get("start_time")
+        if not start_time:
+            return {
+                "messages": state.get("messages", []) + [
+                    {
+                        "role": "assistant",
+                        "content": "Please tell me the start time (for example: 10:00 AM)."
+                    }
+                ]
+            }
         existing = get_attendance_for_employee_on_date(emp_id, today)
 
         if existing and existing["start_time"]:

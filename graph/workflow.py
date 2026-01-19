@@ -32,12 +32,13 @@ def build_workflow():
     # -------------------------
     graph.add_conditional_edges(
         "supervisor_agent",
-        route_by_intent,
+        lambda state: END if state.get("stop") else route_by_intent(state),
         {
             "employee_agent": "employee_agent",
             "attendance_agent": "attendance_agent",
             "report_agent": "report_agent",
             "knowledge_agent": "knowledge_agent",
+            END: END,
         },
     )
 

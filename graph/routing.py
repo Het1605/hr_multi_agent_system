@@ -16,7 +16,5 @@ def route_by_intent(state: HRState) -> str:
     if intent == "hr_policy":
         return "knowledge_agent"
 
-    if intent == "greeting":
-        return "knowledge_agent"
 
     return "knowledge_agent"

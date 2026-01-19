@@ -78,9 +78,14 @@ def get_employees_by_name(name: str) -> List[Dict]:
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT id, name, email, role FROM employees WHERE name = ?",
+        """
+        SELECT id, name, email, role
+        FROM employees
+        WHERE LOWER(name) = LOWER(?)
+        """,
         (name,),
     )
+
     rows = cursor.fetchall()
     conn.close()
 
