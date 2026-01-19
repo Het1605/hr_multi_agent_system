@@ -1,0 +1,27 @@
+# Core LangGraph + LangChain
+langgraph
+langchain
+langchain-core
+
+# OpenAI (GPT-4o)
+openai
+langchain-openai
+
+# Environment variables
+python-dotenv
+
+# Data validation
+pydantic
+
+# Database (SQLite)
+sqlite-utils
+
+# Vector DB
+faiss-cpu
+chromadb
+
+# Text processing
+tiktoken
+
+# Utilities
+typing-extensions
