@@ -7,6 +7,8 @@ from langchain_core.output_parsers import PydanticOutputParser
 from graph.state import HRState
 from config.settings import LLM_MODEL, LLM_TEMPERATURE
 
+from tools.time_tool import normalize_time_24h
+
 
 # -----------------------------
 # Structured Output Schema
@@ -68,8 +70,9 @@ prompt = ChatPromptTemplate.from_messages(
             - greeting
             - create_employee
             - find_employee
-            - start_attendance
-            - end_attendance
+            - attendance_start
+            - attendance_end
+            - attendance_summary
             - daily_report
             - monthly_report
             - working_hours
@@ -159,6 +162,66 @@ prompt = ChatPromptTemplate.from_messages(
             - NEVER assume extracted data is final without confirmation
             - Always extract the BEST POSSIBLE entities from the input
 
+            ATTENDANCE EXTENSIONS (DO NOT OVERRIDE ABOVE RULES):
+
+            Date extraction rules:
+            - Users may mention dates in natural language, such as:
+            • "today"
+            • "yesterday"
+            • "10 jan", "jan 10"
+            • "12 january", "january 12"
+            - If NO date is mentioned:
+            • Do NOT invent a date
+            • Leave date empty (attendance agent will assume today)
+            - If a FUTURE date is mentioned:
+            • Extract it normally
+            • Do NOT block or correct it here
+
+            Attendance intent clarification:
+            - Phrases like:
+            • "start work"
+            • "started at"
+            • "check in"
+            → intent = start_attendance
+
+            - Phrases like:
+            • "end work"
+            • "finished at"
+            • "check out"
+            → intent = end_attendance
+
+            Attendance summary queries:
+            - Phrases like:
+            • "how many employees worked today"
+            • "who has not started work"
+            • "attendance summary"
+            → intent = attendance_summary
+
+            Confirmation handling:
+            - If user says:
+            • "yes", "confirm", "update it"
+            → action = confirm
+            - If user says:
+            • "no", "cancel", "don’t update"
+            → action = cancel
+
+            INTENT CONTINUITY (VERY IMPORTANT):
+
+            - If the previous intent was one of:
+            • attendance_start
+            • attendance_end
+            • attendance_summary
+
+            - And the user provides follow-up information such as:
+            • employee id or name
+            • time
+            • date
+            • confirmation (yes / confirm / ok)
+
+            - Then KEEP the SAME intent.
+            - Do NOT reclassify as find_employee or unknown.
+            - Do NOT switch intent unless the user clearly changes topic.
+
             Return ONLY structured output.
             {format_instructions}
             """
@@ -184,6 +247,31 @@ def supervisor_agent(state: HRState):
     )
 
     new_entities = result.entities or {}
+
+    
+    if "time" in new_entities:
+        try:
+            new_entities["time"] = normalize_time_24h(new_entities["time"])
+        except Exception:
+            pass
+
+        if result.intent == "attendance_start" and "start_time" not in new_entities:
+            new_entities["start_time"] = new_entities["time"]
+
+        if result.intent == "attendance_end" and "end_time" not in new_entities:
+            new_entities["end_time"] = new_entities["time"]
+
+    for key in ["start_time", "end_time"]:
+        if key in new_entities and new_entities[key]:
+            try:
+                new_entities[key] = normalize_time_24h(new_entities[key])
+            except Exception:
+                pass
+
+
+    # If user said both start and end in one sentence
+    if "start_time" in new_entities and "end_time" in new_entities:
+        new_entities["has_both_times"] = True
 
     merged_entities = {
         **previous_entities,
@@ -238,9 +326,47 @@ def supervisor_agent(state: HRState):
                 {"role": "assistant", "content": response.content}
             ]
         }
+    
+    # -----------------------------
+    # Normalize attendance intent names
+    # -----------------------------
+    INTENT_MAP = {
+        "start_attendance": "attendance_start",
+        "end_attendance": "attendance_end",
+        "attendance_start": "attendance_start",
+        "attendance_end": "attendance_end",
+    }
+
+    normalized_intent = INTENT_MAP.get(result.intent, result.intent)
+
+    # -----------------------------
+    # Enforce intent continuity
+    # -----------------------------
+    previous_intent = state.get("intent")
+
+    if previous_intent in [
+        "attendance_start",
+        "attendance_end",
+        "attendance_summary",
+    ]:
+        if normalized_intent in ["unknown", "find_employee"]:
+            normalized_intent = previous_intent
+
+    previous_entities = state.get("data", {}).get("entities", {})
+
+    # Confirmation continuity (KEEP entities, DO NOT RESET)
+    if result.action == "confirm" and previous_intent in [
+        "attendance_start",
+        "attendance_end",
+    ]:
+        normalized_intent = previous_intent
+        merged_entities = {
+            **previous_entities,
+            **merged_entities
+        }
 
     return {
-        "intent": result.intent,
+        "intent": normalized_intent,
         "data": {
             "entities": merged_entities,
             "missing_fields": missing_fields,

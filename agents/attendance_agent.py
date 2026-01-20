@@ -10,167 +10,185 @@ from tools.db_tool import (
     get_attendance_for_employee_on_date,
     start_attendance,
     end_attendance,
+    get_attendance_summary_for_date,
 )
-from tools.time_tool import current_date
+from tools.time_tool import (
+    current_date,
+    normalize_natural_date,
+    is_future_date,
+)
 from config.settings import LLM_MODEL, LLM_TEMPERATURE
 
 
-llm = ChatOpenAI(
-    model=LLM_MODEL,
-    temperature=LLM_TEMPERATURE
-)
+llm = ChatOpenAI(model=LLM_MODEL, temperature=LLM_TEMPERATURE)
 
 # -----------------------------
-# PROMPT (LANGUAGE ONLY)
+# LLM PROMPT (POLISH ONLY)
 # -----------------------------
 prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
             """
-            You are an Attendance Management Agent.
+            You are an Attendance Assistant.
 
-            You receive structured context describing:
-            - intent
-            - employee information
-            - missing fields
-            - attendance operation result
+            Your job is ONLY to rephrase messages clearly and politely.
+
+            You will be given a message describing the result of an attendance operation
+            or a request for missing information.
 
             RULES:
-            - Never guess time or date
-            - Ask only for missing information
-            - Never mention internal state or fields
-            - Keep responses short and clear
-            - Do NOT answer HR policy questions
+            - Do NOT add new information
+            - Do NOT remove information
+            - Do NOT ask new questions
+            - Do NOT change intent
+            - Do NOT explain internal logic
+            - Do NOT mention HR policies
+            - Do NOT infer anything
+
+            Only rewrite the given message in clear, professional English.
             """
         ),
         ("human", "{input}")
     ]
 )
 
+
+def _reply(state: HRState, text: str) -> Dict:
+    """Utility: polish text with LLM"""
+    chain = prompt | llm
+    response = chain.invoke({"input": text})
+    return {
+        "messages": state.get("messages", []) + [
+            {"role": "assistant", "content": response.content}
+        ]
+    }
+
+
 # -----------------------------
 # ATTENDANCE AGENT
 # -----------------------------
 def attendance_agent(state: HRState) -> Dict:
     intent = state.get("intent")
-    data = state.get("data", {})
-    entities = data.get("entities", {})
-
-    today = current_date()
-
-    response_context = {
-        "intent": intent,
-        "entities": entities
-    }
+    action = state.get("action")
+    entities = state.get("data", {}).get("entities", {})
 
     # -----------------------------
-    # RESOLVE EMPLOYEE (DETERMINISTIC)
+    # DATE HANDLING
+    # -----------------------------
+    if "date" in entities:
+        attendance_date = normalize_natural_date(entities["date"])
+    else:
+        attendance_date = current_date()
+
+    if is_future_date(attendance_date):
+        return _reply(
+            state,
+            "You cannot assign attendance for a future date."
+        )
+
+    # -----------------------------
+    # SUMMARY
+    # -----------------------------
+    if intent == "attendance_summary":
+        summary = get_attendance_summary_for_date(attendance_date)
+        return _reply(
+            state,
+            f"On {attendance_date}, {summary['present']} employees worked "
+            f"and {summary['absent']} employees did not start work."
+        )
+
+    # -----------------------------
+    # RESOLVE EMPLOYEE
     # -----------------------------
     employee = None
 
-    if "employee_id" in entities:
-        employee = get_employee_by_id(int(entities["employee_id"]))
+    emp_id = entities.get("employee_id") or entities.get("id")
+    if emp_id:
+        employee = get_employee_by_id(int(emp_id))
 
     elif "email" in entities:
         employee = get_employee_by_email(entities["email"])
 
     elif "name" in entities:
         matches = get_employees_by_name(entities["name"])
-
         if len(matches) == 1:
             employee = matches[0]
         elif len(matches) > 1:
-            response_context["result"] = "multiple_employees"
-            response_context["employees"] = matches
-
-            chain = prompt | llm
-            final_response = chain.invoke({"input": response_context})
-
-            return {
-                "data": data,
-                "messages": state.get("messages", []) + [
-                    {"role": "assistant", "content": final_response.content}
-                ]
-            }
-
-    # -----------------------------
-    # RECOMPUTE REQUIRED FIELDS
-    # -----------------------------
-    required_fields = []
-
-    if intent in ["attendance_start", "attendance_end"]:
-        required_fields = ["employee", "time"]
-
-    missing_fields = []
+            return _reply(
+                state,
+                "Multiple employees found with this name. "
+                "Please provide the employee ID."
+            )
+        else:
+            return _reply(state, "No employee found with this name.")
 
     if not employee:
-        missing_fields.append("employee")
-
-    if intent == "attendance_start":
-        if not entities.get("start_time"):
-            missing_fields.append("start_time")
-
-    if intent == "attendance_end":
-        if not entities.get("end_time"):
-            missing_fields.append("end_time")
-
-    # -----------------------------
-    # ASK FOR MISSING INFO (NO LOGIC IN LLM)
-    # -----------------------------
-    if missing_fields:
-        response_context["missing_fields"] = missing_fields
-
-        chain = prompt | llm
-        final_response = chain.invoke({"input": response_context})
-
-        return {
-            "data": data,
-            "messages": state.get("messages", []) + [
-                {"role": "assistant", "content": final_response.content}
-            ]
-        }
+        return _reply(
+            state,
+            "Please provide the employee name or ID."
+        )
 
     emp_id = employee["id"]
+    name = employee["name"]
+
+    start_time = entities.get("start_time")
+    end_time = entities.get("end_time")
 
     # -----------------------------
     # START ATTENDANCE
     # -----------------------------
     if intent == "attendance_start":
-        start_time_value = entities["start_time"]
-        existing = get_attendance_for_employee_on_date(emp_id, today)
+        if not start_time:
+            return _reply(
+                state,
+                f"Please provide the start time for {name}."
+            )
 
-        if existing and existing.get("start_time"):
-            response_context["result"] = "already_started"
-        else:
-            start_attendance(emp_id, today, start_time_value)
-            response_context["result"] = "start_recorded"
-            response_context["start_time"] = start_time_value
+        existing = get_attendance_for_employee_on_date(emp_id, attendance_date)
+
+        if existing and existing.get("start_time") and action != "confirm":
+            return _reply(
+                state,
+                f"{name} already has a start time for {attendance_date}. "
+                "Do you want to update it?"
+            )
+
+        start_attendance(emp_id, attendance_date, start_time)
+        return _reply(
+            state,
+            f"Work started for {name} at {start_time} on {attendance_date}."
+        )
 
     # -----------------------------
     # END ATTENDANCE
     # -----------------------------
-    elif intent == "attendance_end":
-        end_time_value = entities["end_time"]
-        existing = get_attendance_for_employee_on_date(emp_id, today)
+    if intent == "attendance_end":
+        if not end_time:
+            return _reply(
+                state,
+                f"Please provide the end time for {name}."
+            )
+
+        existing = get_attendance_for_employee_on_date(emp_id, attendance_date)
 
         if not existing or not existing.get("start_time"):
-            response_context["result"] = "not_started"
-        elif existing.get("end_time"):
-            response_context["result"] = "already_ended"
-        else:
-            end_attendance(emp_id, today, end_time_value)
-            response_context["result"] = "end_recorded"
-            response_context["end_time"] = end_time_value
+            return _reply(
+                state,
+                f"{name} has not started work yet on {attendance_date}."
+            )
 
-    # -----------------------------
-    # FINAL RESPONSE (LLM PHRASES ONLY)
-    # -----------------------------
-    chain = prompt | llm
-    final_response = chain.invoke({"input": response_context})
+        if existing.get("end_time") and action != "confirm":
+            return _reply(
+                state,
+                f"{name} already has an end time for {attendance_date}. "
+                "Do you want to update it?"
+            )
 
-    return {
-        "data": data,
-        "messages": state.get("messages", []) + [
-            {"role": "assistant", "content": final_response.content}
-        ]
-    }
+        end_attendance(emp_id, attendance_date, end_time)
+        return _reply(
+            state,
+            f"Work ended for {name} at {end_time} on {attendance_date}."
+        )
+
+    return _reply(state, "I could not process this attendance request.")

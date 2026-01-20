@@ -31,6 +31,8 @@ def route_by_intent(state: HRState) -> str:
         "attendance_daily_report",
         "attendance_monthly_report",
         "attendance_working_hours",
+        "attendance_summary",   # ✅ ADD THIS
+
     ]:
         return "attendance_agent"
 
@@ -53,4 +55,4 @@ def route_by_intent(state: HRState) -> str:
     # -----------------------------
     # Fallback (safe)
     # -----------------------------
-    return "supervisor_agent"
+    return "knowledge_agent"

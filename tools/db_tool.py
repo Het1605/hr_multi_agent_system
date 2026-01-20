@@ -277,3 +277,44 @@ def get_all_attendance() -> List[Dict]:
         }
         for r in rows
     ]
+
+# =========================
+# ATTENDANCE SUMMARY
+# =========================
+
+def get_attendance_summary_for_date(date: str) -> Dict:
+    """
+    Returns summary for a given date:
+    - total employees
+    - employees with attendance
+    - employees without attendance
+    """
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Total employees
+    cursor.execute("SELECT COUNT(*) FROM employees")
+    total_employees = cursor.fetchone()[0]
+
+    # Employees with attendance on given date
+    cursor.execute(
+        """
+        SELECT COUNT(DISTINCT employee_id)
+        FROM attendance
+        WHERE date = ?
+        """,
+        (date,),
+    )
+    present_count = cursor.fetchone()[0]
+
+    absent_count = total_employees - present_count
+
+    conn.close()
+
+    return {
+        "date": date,
+        "total_employees": total_employees,
+        "present": present_count,
+        "absent": absent_count,
+    }
