@@ -278,43 +278,75 @@ def get_all_attendance() -> List[Dict]:
         for r in rows
     ]
 
+
 # =========================
-# ATTENDANCE SUMMARY
+# REPORT / SUMMARY FUNCTIONS (FIXED)
 # =========================
 
 def get_attendance_summary_for_date(date: str) -> Dict:
     """
-    Returns summary for a given date:
+    Accurate daily summary:
     - total employees
-    - employees with attendance
-    - employees without attendance
+    - employees who STARTED work
+    - employees who did NOT start work
     """
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Total employees
     cursor.execute("SELECT COUNT(*) FROM employees")
     total_employees = cursor.fetchone()[0]
 
-    # Employees with attendance on given date
     cursor.execute(
         """
         SELECT COUNT(DISTINCT employee_id)
         FROM attendance
         WHERE date = ?
+          AND start_time IS NOT NULL
         """,
         (date,),
     )
-    present_count = cursor.fetchone()[0]
-
-    absent_count = total_employees - present_count
+    worked_count = cursor.fetchone()[0]
 
     conn.close()
 
     return {
         "date": date,
         "total_employees": total_employees,
-        "present": present_count,
-        "absent": absent_count,
+        "worked": worked_count,
+        "not_worked": total_employees - worked_count,
+    }
+
+
+def get_employee_daily_report(employee_id: int, date: str) -> Optional[Dict]:
+    """
+    Individual employee daily report
+    """
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT e.id, e.name, a.date, a.start_time, a.end_time
+        FROM employees e
+        LEFT JOIN attendance a
+            ON e.id = a.employee_id AND a.date = ?
+        WHERE e.id = ?
+        """,
+        (date, employee_id),
+    )
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "employee_id": row[0],
+        "name": row[1],
+        "date": row[2],
+        "start_time": row[3],
+        "end_time": row[4],
     }

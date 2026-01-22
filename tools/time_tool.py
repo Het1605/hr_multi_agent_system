@@ -24,7 +24,10 @@ def parse_date(date_str: str) -> date:
 
 
 def parse_time(time_str: str) -> time:
-    return datetime.strptime(time_str, "%H:%M:%S").time()
+    try:
+        return datetime.strptime(time_str, "%H:%M:%S").time()
+    except ValueError:
+        return datetime.strptime(time_str, "%H:%M").time()
 
 
 def month_date_range(year: int, month: int) -> Tuple[str, str]:
@@ -62,6 +65,7 @@ def normalize_natural_date(text: str) -> Optional[str]:
     Convert natural language date to ISO format (YYYY-MM-DD).
 
     Supported:
+    - YYYY-MM-DD (ISO)
     - today
     - yesterday
     - 10 jan / jan 10
@@ -71,6 +75,11 @@ def normalize_natural_date(text: str) -> Optional[str]:
     """
 
     text = text.lower().strip()
+    
+    # Check if already ISO
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", text):
+        return text
+
     today = date.today()
 
     if text == "today":

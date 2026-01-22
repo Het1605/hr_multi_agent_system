@@ -20,3 +20,5 @@ Thumbs.db
 .idea/
 
 .pytest_cache/
+
+tests/

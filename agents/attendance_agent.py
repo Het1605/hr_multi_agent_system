@@ -191,4 +191,33 @@ def attendance_agent(state: HRState) -> Dict:
             f"Work ended for {name} at {end_time} on {attendance_date}."
         )
 
+    # -----------------------------
+    # ATTENDANCE RANGE (Start + End)
+    # -----------------------------
+    if intent == "attendance_range":
+        if not start_time or not end_time:
+            return _reply(
+                state,
+                f"Please provide both start and end times for {name}."
+            )
+
+        existing = get_attendance_for_employee_on_date(emp_id, attendance_date)
+
+        # If data exists and we are not confirming, warn user
+        if existing and (existing.get("start_time") or existing.get("end_time")) and action != "confirm":
+             return _reply(
+                state,
+                f"{name} already has attendance data for {attendance_date}. "
+                "Do you want to update the range?"
+            )
+
+        # Execute both
+        start_attendance(emp_id, attendance_date, start_time)
+        end_attendance(emp_id, attendance_date, end_time)
+
+        return _reply(
+            state,
+            f"Attendance recorded for {name}: {start_time} to {end_time} on {attendance_date}."
+        )
+
     return _reply(state, "I could not process this attendance request.")

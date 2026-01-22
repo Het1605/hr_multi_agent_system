@@ -31,8 +31,7 @@ def route_by_intent(state: HRState) -> str:
         "attendance_daily_report",
         "attendance_monthly_report",
         "attendance_working_hours",
-        "attendance_summary",   # ✅ ADD THIS
-
+        "attendance_range",
     ]:
         return "attendance_agent"
 
@@ -42,7 +41,8 @@ def route_by_intent(state: HRState) -> str:
     if intent in [
         "daily_report",
         "monthly_report",
-        "working_hours",
+        "working_hours_report",
+        "attendance_summary",
     ]:
         return "report_agent"
 

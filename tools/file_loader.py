@@ -1,21 +1,18 @@
-import os
+from pathlib import Path
 from typing import List
-from config.settings import KNOWLEDGE_PATH
+
+
+KNOWLEDGE_DIR = Path("knowledge")
 
 
 def load_knowledge_files() -> List[str]:
+    """
+    Load all HR policy and company rule documents.
+    """
     documents = []
 
-    for filename in os.listdir(KNOWLEDGE_PATH):
-        file_path = os.path.join(KNOWLEDGE_PATH, filename)
-
-        if not os.path.isfile(file_path):
-            continue
-
-        if filename.endswith(".txt") or filename.endswith(".md"):
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read().strip()
-                if content:
-                    documents.append(content)
+    for file_path in KNOWLEDGE_DIR.glob("*"):
+        if file_path.suffix in [".txt", ".md"]:
+            documents.append(file_path.read_text(encoding="utf-8"))
 
     return documents

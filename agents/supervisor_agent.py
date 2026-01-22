@@ -34,6 +34,9 @@ parser = PydanticOutputParser(pydantic_object=SupervisorOutput)
 # -----------------------------
 # Prompt
 # -----------------------------
+# -----------------------------
+# Prompt
+# -----------------------------
 prompt = ChatPromptTemplate.from_messages(
     [
         (
@@ -72,6 +75,7 @@ prompt = ChatPromptTemplate.from_messages(
             - find_employee
             - attendance_start
             - attendance_end
+            - attendance_range
             - attendance_summary
             - daily_report
             - monthly_report
@@ -84,143 +88,91 @@ prompt = ChatPromptTemplate.from_messages(
             (All examples below use dummy names for illustration only.)
 
             Employee registration handling:
-            - Users may provide name, email, and role in ANY format, including:
-            • "alex, alex@example.com, QA"
-            • "alex alex@example.com QA"
-            • "my name is alex, email alex@example.com, role QA"
-            • "alex, QA" (partial)
-            • "alex" (partial)
-
-            Entity identification rules:
-            - Any word containing "@" MUST be treated as email.
-            - Role and name do NOT have fixed positions.
-            - Do NOT assume the first value is always the name.
-
-            Comma- or space-separated input handling:
-            - Identify email first using "@"
-            - From remaining values:
-            • If a value matches common role patterns (QA, AI, ML, HR, Dev, Engineer, Tester),
-                treat it as role
-            • Otherwise, treat it as name
-            - If multiple non-email values exist:
-            • Prefer human-name–like words as name
-            • Prefer job-related words as role
-
-            Short / ambiguous role handling:
-            - Short or abbreviated role terms (case-insensitive) may be ambiguous, such as:
-                - qa, q.a, quality
-                - ai, artificial intelligence
-                - ml, machine learning
-                - dev, developer
-                - tester, testing
-                - powerbi, power bi
-
-                Treat role detection as semantic, not exact-match.
-            - Expand them to reasonable full forms when possible:
-            • "QA" → "QA Engineer"
-            • "AI" → "AI Developer"
-            • "ML" → "ML Engineer"
-            - If expansion is uncertain, keep the original value
-
-            Confirmation requirement:
-            - Before creating an employee, always prepare a confirmation summary:
-            Name, Email, Role
-            - Ask the user to confirm with a clear yes/no response.
-            - Examples of confirmation:
-            • "Yes"
-            • "Confirm"
-            • "Looks good"
-            - If the user says NO or corrects details:
-            - Update the entities
-            - Show the confirmation again
-            - If the user denies registration:
-            - Do NOT proceed
-
-            Partial input rules:
-            - If only ONE value is provided:
-            • Treat it as name
-            - If TWO values are provided:
-            • If one contains "@", treat as name + email
-            • Otherwise, treat as name + role (tentative)
+            - Users may provide name, email, and role in ANY format.
+            - Entity identification rules:
+                - Any word containing "@" MUST be treated as email.
+                - Prefer human-name–like words as name.
+                - Prefer job-related words as role.
+            - Confirmation requirement:
+                - Before creating an employee, always prepare a confirmation summary.
+                - Ask the user to confirm with a clear yes/no response.
 
             Conversation memory rules:
             - If the intent is "create_employee" and some fields are missing:
-            • Reuse entities already provided in previous messages
-            • Merge new entities with previously extracted entities
-            • DO NOT discard earlier information
+                - Reuse entities already provided in previous messages.
+                - DO NOT discard earlier information.
 
-            PARTIAL REGISTRATION HANDLING:
+            Attendance NLU RULES (STRICT):
 
-            - If intent is "create_employee" and some fields are already extracted:
-            • Identify exactly which fields are missing (name, email, role)
-            • Do NOT treat missing fields as all fields missing
-            • Do NOT reset previously extracted information
-            - Clearly indicate which fields are missing so the next agent can ask ONLY for those fields
+            Supported attendance intents:
+            - attendance_start
+            - attendance_end
+            - attendance_range
+            - attendance_summary
 
-            IMPORTANT:
-            - NEVER ignore user-provided information
-            - NEVER assume extracted data is final without confirmation
-            - Always extract the BEST POSSIBLE entities from the input
+            Attendance intent mapping:
+            - "start work", "started at", "check in", "began work" -> attendance_start
+            - "end work", "finished", "check out", "ended work" -> attendance_end
+            - "work from 9 to 6", "start at 10 and end at 7", "worked 9–6" -> attendance_range
+            - "check in at 9 check out at 6" -> attendance_range
+            - "how many employees worked today", "who has not started work", "attendance summary" -> attendance_summary
 
-            ATTENDANCE EXTENSIONS (DO NOT OVERRIDE ABOVE RULES):
+            Attendance Routing Rules (CRITICAL):
+            - IF user mentions "start work", "end work", "worked", "check in/out", "attendance"
+            - THEN intent MUST be attendance_*.
+            - NEVER route these to hr_policy.
 
-            Date extraction rules:
-            - Users may mention dates in natural language, such as:
-            • "today"
-            • "yesterday"
-            • "10 jan", "jan 10"
-            • "12 january", "january 12"
-            - If NO date is mentioned:
-            • Do NOT invent a date
-            • Leave date empty (attendance agent will assume today)
-            - If a FUTURE date is mentioned:
-            • Extract it normally
-            • Do NOT block or correct it here
+            Employee identification:
+            - If a number is mentioned and refers to an employee -> employee_id
+            - If text contains "@" -> email
+            - Otherwise treat human-like words as name
+            - **CRITICAL NAME PLACEMENT RULE**:
+              - If the sentence starts with a word followed by a command (e.g., "[name] start work"), that first word IS the name.
+              - Examples:
+                "het start work" -> name = "het"
+                "smith check in" -> name = "smith"
+                "yash ended work" -> name = "yash"
+                "ankit start work" -> name = "ankit"
+            - Treat lowercase names (het, yash, smith, ankit) as VALID names.
+            - TRUST the first word as the name if it precedes a command.
+            - **OVERRIDE RULE**: If a new name is found at the start of a command, USE IT. Do NOT use the previously stored name.
 
-            Attendance intent clarification:
-            - Phrases like:
-            • "start work"
-            • "started at"
-            • "check in"
-            → intent = start_attendance
+            Time extraction:
+            - Extract times from phrases like:
+              "10", "10:00", "10 am", "7 pm", "evening 7:30", "from 9 to 6"
+            - Convert all times to 24-hour format (HH:MM).
+            - AM/PM Handling:
+              - "7" -> 19:00 (if context implies evening/end work)
+              - "7 pm" -> 19:00
+              - "6" -> 18:00 (end work context)
+              - "9" -> 09:00 (morning/start context)
+            - Use start_time and end_time keys.
+            - If intent is attendance_range, extract both times.
 
-            - Phrases like:
-            • "end work"
-            • "finished at"
-            • "check out"
-            → intent = end_attendance
+            Date extraction:
+            - Extract dates from natural language:
+              "today", "yesterday", "tomorrow", "10 jan", "january 12"
+            - Do NOT invent dates
+            - Do NOT validate future or past dates
 
-            Attendance summary queries:
-            - Phrases like:
-            • "how many employees worked today"
-            • "who has not started work"
-            • "attendance summary"
-            → intent = attendance_summary
+            Intent continuity (CRITICAL):
+            - If the previous intent was attendance_start, attendance_end, attendance_range, or attendance_summary
+            - And the next message contains:
+              - only time ("11:00", "7 pm")
+              - only confirmation ("yes", "ok", "update it")
+              - only employee name/id/email
+            - Then KEEP the same attendance intent
+            - Do NOT switch intent to hr_policy, find_employee, or unknown
+            - Do NOT reset entities
 
             Confirmation handling:
-            - If user says:
-            • "yes", "confirm", "update it"
-            → action = confirm
-            - If user says:
-            • "no", "cancel", "don’t update"
-            → action = cancel
+            - If the user says "yes", "confirm", "update it", "ok" -> action = confirm
+            - If the user says "no", "cancel" -> action = cancel
+            - Do NOT reset entities on confirmation
 
-            INTENT CONTINUITY (VERY IMPORTANT):
-
-            - If the previous intent was one of:
-            • attendance_start
-            • attendance_end
-            • attendance_summary
-
-            - And the user provides follow-up information such as:
-            • employee id or name
-            • time
-            • date
-            • confirmation (yes / confirm / ok)
-
-            - Then KEEP the SAME intent.
-            - Do NOT reclassify as find_employee or unknown.
-            - Do NOT switch intent unless the user clearly changes topic.
+            Policy vs Report clarification:
+            - "office working hours", "company working time" -> intent = hr_policy
+            - "working hours of an employee", "hours worked today" -> intent = working_hours_report
 
             Return ONLY structured output.
             {format_instructions}
@@ -272,6 +224,19 @@ def supervisor_agent(state: HRState):
     # If user said both start and end in one sentence
     if "start_time" in new_entities and "end_time" in new_entities:
         new_entities["has_both_times"] = True
+        if result.intent != "attendance_range": 
+             result.intent = "attendance_range" # Force classification if NLU missed it but entities exist
+
+    # -----------------------------
+    # Smart Merge (Protect ID integrity)
+    # -----------------------------
+    # If a NEW name is detected, we MUST clear the old employee_id
+    # otherwise we get (Name=Ankit, ID=TusharID) -> Attendance Agent prioritizes ID -> Tushar again.
+    if "name" in new_entities and new_entities["name"]:
+        if "employee_id" in previous_entities:
+            del previous_entities["employee_id"]
+        if "id" in previous_entities:
+             del previous_entities["id"]
 
     merged_entities = {
         **previous_entities,
@@ -287,7 +252,7 @@ def supervisor_agent(state: HRState):
         if field not in merged_entities
     ]
 
-    # If greeting → generate response AND stop graph
+    # If greeting -> generate response AND stop graph
     if result.intent == "greeting":
         response_chain = ChatPromptTemplate.from_messages(
             [
@@ -335,6 +300,7 @@ def supervisor_agent(state: HRState):
         "end_attendance": "attendance_end",
         "attendance_start": "attendance_start",
         "attendance_end": "attendance_end",
+        "attendance_range": "attendance_range",
     }
 
     normalized_intent = INTENT_MAP.get(result.intent, result.intent)
@@ -347,17 +313,22 @@ def supervisor_agent(state: HRState):
     if previous_intent in [
         "attendance_start",
         "attendance_end",
-        "attendance_summary",
+        "attendance_range",
+       
     ]:
-        if normalized_intent in ["unknown", "find_employee"]:
+        # If new intent is unknown/find_employee OR if explicit confirmation action is present
+        # We must keep previous intent.
+        if normalized_intent in ["unknown", "find_employee", "hr_policy"] or result.action == "confirm":
+             # Double check: if user said "policy" explicitly, we might want to switch. 
+             # But user instructions said: "DO NOT switch intent to hr_policy" in continuity context.
+             # So we force continuity.
             normalized_intent = previous_intent
-
-    previous_entities = state.get("data", {}).get("entities", {})
 
     # Confirmation continuity (KEEP entities, DO NOT RESET)
     if result.action == "confirm" and previous_intent in [
         "attendance_start",
         "attendance_end",
+        "attendance_range",
     ]:
         normalized_intent = previous_intent
         merged_entities = {
@@ -367,6 +338,7 @@ def supervisor_agent(state: HRState):
 
     return {
         "intent": normalized_intent,
+        "action": result.action, # EXPORT ACTION!
         "data": {
             "entities": merged_entities,
             "missing_fields": missing_fields,
