@@ -73,6 +73,7 @@ prompt = ChatPromptTemplate.from_messages(
             - greeting
             - create_employee
             - find_employee
+            - employee_find_all
             - attendance_start
             - attendance_end
             - attendance_range
@@ -82,6 +83,7 @@ prompt = ChatPromptTemplate.from_messages(
             - working_hours
             - hr_policy
             - unknown
+          
 
             CRITICAL ENTITY EXTRACTION & FOLLOW-UP RULES:
 
@@ -165,10 +167,26 @@ prompt = ChatPromptTemplate.from_messages(
             - Do NOT switch intent to hr_policy, find_employee, or unknown
             - Do NOT reset entities
 
+           
             Confirmation handling:
             - If the user says "yes", "confirm", "update it", "ok" -> action = confirm
             - If the user says "no", "cancel" -> action = cancel
             - Do NOT reset entities on confirmation
+
+            EMPLOYEE LISTING RULE (CRITICAL):
+
+            If user asks:
+            - "show employee details"
+            - "show all employee details"
+            - "list employees"
+            - "all employees"
+            - "employee list"
+
+            Then:
+            - intent = employee_find_all
+            - action = query
+            - entities = empty
+            - Do NOT ask follow-up questions
 
             Policy vs Report clarification:
             - "office working hours", "company working time" -> intent = hr_policy

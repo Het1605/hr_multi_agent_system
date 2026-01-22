@@ -109,7 +109,7 @@ def employee_agent(state: HRState) -> Dict:
                 {"role": "assistant", "content": final_response.content}
             ]
         }
-
+    
     # -----------------------------
     # FIND EMPLOYEE
     # -----------------------------
@@ -140,6 +140,29 @@ def employee_agent(state: HRState) -> Dict:
             "data": data,
             "messages": state.get("messages", []) + [
                 {"role": "assistant", "content": final_response.content}
+            ]
+        }
+    
+
+    if intent == "employee_find_all":
+        employees = get_all_employees()
+
+        if not employees:
+            return {
+                "messages": state.get("messages", []) + [
+                    {"role": "assistant", "content": "No employees found."}
+                ]
+            }
+
+        lines = ["Here are all employees:"]
+        for e in employees:
+            lines.append(
+                f"- ID {e['id']}: {e['name']} ({e['role']}, {e['email']})"
+            )
+
+        return {
+            "messages": state.get("messages", []) + [
+                {"role": "assistant", "content": "\n".join(lines)}
             ]
         }
 
